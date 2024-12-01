@@ -1,0 +1,10 @@
+﻿################################################################################
+# This .gitignore file was automatically created by Microsoft(R) Visual Studio.
+################################################################################
+
+/.vs
+/bin/Release
+/obj
+/packages/BepInEx.AssemblyPublicizer.MSBuild.0.4.1
+*.user
+*.config

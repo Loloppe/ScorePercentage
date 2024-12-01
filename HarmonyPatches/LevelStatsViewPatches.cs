@@ -1,57 +1,61 @@
 ﻿using HarmonyLib;
+using ScorePercentage.Utils;
 using System;
+using System.Threading;
+using TMPro;
 
 namespace ScorePercentage.HarmonyPatches
 {
-    [HarmonyPatch(typeof(LevelStatsView))]
-    [HarmonyPatch("ShowStats", MethodType.Normal)]
-    class LevelStatsViewPatches : LevelStatsView
+    class LevelStatsViewPatches
     {
-        static void Prefix(ref LevelStatsViewPatches __instance, IDifficultyBeatmap difficultyBeatmap, PlayerData playerData)
+        private static BeatmapLevelsModel beatmapLevelsModel = null;
+        private static BeatmapDataLoader beatmapDataLoader = null;
+
+        [HarmonyPatch(typeof(StandardLevelDetailView), nameof(StandardLevelDetailView.RefreshContent))]
+        static class StandardLevelDetailViewPatch
         {
-            //Update highScoreText, if enabled in Plugin Config
-            if (PluginConfig.Instance.EnableMenuHighscore)
+            static void Prefix(StandardLevelDetailView __instance)
             {
-                if (playerData != null)
-                {
-                    PlayerLevelStatsData playerLevelStatsData = playerData.GetPlayerLevelStatsData(difficultyBeatmap.level.levelID, difficultyBeatmap.difficulty, difficultyBeatmap.parentDifficultyBeatmapSet.beatmapCharacteristic);
-
-                    //Prepare Data for LevelStatsView
-                    if (playerLevelStatsData.validScore)
-                    {
-                        //Plugin.log.Debug("Valid Score");
-                        Plugin.scorePercentageCommon.currentScore = playerLevelStatsData.highScore;
-                    }
-                    else
-                    {
-                        Plugin.scorePercentageCommon.currentPercentage = 0;
-                        Plugin.scorePercentageCommon.currentScore = 0;
-                    }
-
-                }
-                else
-                {                 
-                    //Plugin.log.Debug("Player data was null");
-                }
+                beatmapLevelsModel = __instance._beatmapLevelsModel;
+                beatmapDataLoader = __instance._beatmapDataLoader;
             }
         }
-        static async void Postfix(LevelStatsViewPatches __instance, IDifficultyBeatmap difficultyBeatmap, PlayerData playerData)
+
+        [HarmonyPatch(typeof(LevelStatsView), nameof(LevelStatsView.ShowStats))]
+        static class ShowStatsPatch
         {
-            if (Plugin.scorePercentageCommon.currentScore != 0) { 
-                //Plugin.log.Debug("Running Postfix");
-                EnvironmentInfoSO currentEnvironmentInfoSO = difficultyBeatmap.GetEnvironmentInfo();
-                //Plugin.log.Debug("Got Environment Info");
-                //IReadonlyBeatmapData currentReadonlyBeatmapData = await difficultyBeatmap.GetBeatmapDataAsync(currentEnvironmentInfoSO);
-                IReadonlyBeatmapData currentReadonlyBeatmapData = await difficultyBeatmap.GetBeatmapDataAsync(currentEnvironmentInfoSO, playerData.playerSpecificSettings);
-                //Plugin.log.Debug("Got BeatmapData");
-                int currentDifficultyMaxScore = ScoreModel.ComputeMaxMultipliedScoreForBeatmap(currentReadonlyBeatmapData);
-                //Plugin.log.Debug("Calculated Max Score: " + currentDifficultyMaxScore.ToString());
-                Plugin.scorePercentageCommon.currentPercentage = ScorePercentageCommon.calculatePercentage(currentDifficultyMaxScore, Plugin.scorePercentageCommon.currentScore);
-                //Plugin.log.Debug("Calculated Percentage");
-                //Plugin.log.Debug("Adding Percentage to HighscoreText");
-                
-                Traverse.Create(__instance).Field("_highScoreText").Property("text").SetValue(Plugin.scorePercentageCommon.currentScore.ToString() + " " + "(" + Math.Round(Plugin.scorePercentageCommon.currentPercentage, 2).ToString() + "%)");
-                // __instance._highScoreText.text = Plugin.scorePercentageCommon.currentScore.ToString() + " " + "(" + Math.Round(Plugin.scorePercentageCommon.currentPercentage,2).ToString() + "%)";
+            static void Prefix(in BeatmapKey beatmapKey, PlayerData playerData)
+            {
+                if (PluginConfig.Instance.EnableMenuHighscore)
+                {
+                    if (playerData != null)
+                    {
+                        PlayerLevelStatsData playerLevelStatsData = playerData.GetOrCreatePlayerLevelStatsData(beatmapKey);
+
+                        if (playerLevelStatsData.validScore)
+                        {
+                            ScorePercentageCommon.currentScore = playerLevelStatsData.highScore;
+                        }
+                        else
+                        {
+                            ScorePercentageCommon.currentPercentage = 0;
+                            ScorePercentageCommon.currentScore = 0;
+                        }
+                    }
+                }
+
+
+            }
+            static async void Postfix(BeatmapKey beatmapKey, PlayerData playerData, TextMeshProUGUI ____highScoreText)
+            {
+                if (ScorePercentageCommon.currentScore != 0 && beatmapLevelsModel != null && beatmapDataLoader != null)
+                {
+                    var beatmapData = await beatmapLevelsModel.LoadBeatmapLevelDataAsync(beatmapKey.levelId, BeatmapLevelDataVersion.Original, new CancellationToken());
+                    var readonlyBeatmapData = await beatmapDataLoader.LoadBeatmapDataAsync(beatmapData.beatmapLevelData, beatmapKey, 0f, false, null, null, BeatmapLevelDataVersion.Original, playerData.gameplayModifiers, playerData.playerSpecificSettings, false);
+                    int currentDifficultyMaxScore = ScoreModel.ComputeMaxMultipliedScoreForBeatmap(readonlyBeatmapData);
+                    ScorePercentageCommon.currentPercentage = ScorePercentageCommon.calculatePercentage(currentDifficultyMaxScore, ScorePercentageCommon.currentScore);
+                    ____highScoreText.text = ScorePercentageCommon.currentScore.ToString() + " " + "(" + Math.Round(ScorePercentageCommon.currentPercentage, 2).ToString() + "%)";
+                }
             }
         }
     }
